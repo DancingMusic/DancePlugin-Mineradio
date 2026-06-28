@@ -5,10 +5,12 @@ export default defineConfig({
   clean: true,
   dts: true,
   sourcemap: false,
+  minify: true,
   splitting: false,
   treeshake: true,
   target: 'es2020',
-  external: ['@dancingmusic/plugin-sdk', 'three'],
+  external: ['@dancingmusic/plugin-sdk'],
+  noExternal: ['three'],
   loader: {
     '.svg': 'dataurl',
   },

@@ -887,7 +887,7 @@ export class MineradioPlugin implements DancePlugin {
     name: 'Mineradio',
     description: '移植 Mineradio 舞台歌词主效果：Three 点云封面、悬浮歌词与拖拽视角',
     author: 'DancingMusic',
-    version: '1.0.0',
+    version: '1.0.1',
     category: 'particle',
     price: 0,
     thumbnail: thumbnailUrl,

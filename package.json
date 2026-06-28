@@ -1,6 +1,6 @@
 {
   "name": "@dancingmusic/dance-plugin-mineradio",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Mineradio stage lyric, particle cover, gesture camera, and 3D playlist shelf plugin for DancingMusic.",
   "type": "module",
   "module": "./dist/index.js",
@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --target es2020 --no-splitting --dts --clean",
+    "postbuild": "node scripts/strip-trailing-whitespace.mjs dist/index.js",
     "dev": "tsup src/index.ts --format esm --target es2020 --no-splitting --dts --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
