@@ -1,6 +1,6 @@
 {
   "name": "@dancingmusic/dance-plugin-mineradio",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Mineradio stage lyric, particle cover, gesture camera, and 3D playlist shelf plugin for DancingMusic.",
   "type": "module",
   "module": "./dist/index.js",
@@ -37,7 +37,7 @@
   "author": "DancingMusic",
   "license": "GPL-3.0",
   "peerDependencies": {
-    "@dancingmusic/plugin-sdk": "^1.0.0",
+    "@dancingmusic/plugin-sdk": "^1.1.0",
     "three": "^0.181.2"
   },
   "dependencies": {

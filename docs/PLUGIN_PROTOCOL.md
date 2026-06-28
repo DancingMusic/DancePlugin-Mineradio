@@ -56,7 +56,30 @@ The plugin may request actions, but the host owns playback and connector data.
 ```ts
 interface DanceHostActions {
   playQueueIndex?: (index: number) => void | Promise<void>;
-  playPlaylist?: (request: { id: string; title?: string }) => void | Promise<void>;
+  playPlaylist?: (request: { id: string; title?: string; startIndex?: number }) => void | Promise<void>;
+  getPlaylistDetail?: (request: { id: string; title?: string }) => {
+    id: string;
+    title?: string;
+    tracks: Array<{
+      id: string;
+      title: string;
+      artist: string;
+      album?: string;
+      cover?: string;
+      durationSec?: number;
+    }>;
+  } | Promise<{
+    id: string;
+    title?: string;
+    tracks: Array<{
+      id: string;
+      title: string;
+      artist: string;
+      album?: string;
+      cover?: string;
+      durationSec?: number;
+    }>;
+  }>;
   openPlaylistDetail?: (request: { id: string; title?: string }) => void | Promise<void>;
 }
 ```
@@ -65,9 +88,11 @@ Current behavior:
 
 - Queue cards call `playQueueIndex(index)`.
 - Playlist cards can call `playPlaylist({ id, title })`.
-- Detail buttons can call `openPlaylistDetail({ id, title })`.
+- Detail buttons prefer `getPlaylistDetail({ id, title })` and render a plugin-owned 3D detail panel from the host snapshot.
+- Detail rows call `playPlaylist({ id, title, startIndex })` so the host starts the selected playlist track.
+- If `getPlaylistDetail` is unavailable, detail buttons fall back to `openPlaylistDetail({ id, title })`.
 
-If the plugin needs richer playlist detail rendering, add that contract to `DancingPluginSdk` first, then consume it here. Do not call MusicStore or connector APIs directly from the plugin.
+The plugin must not call MusicStore or connector APIs directly. All playlist detail data comes from the host-owned snapshot.
 
 ## Rhythm
 

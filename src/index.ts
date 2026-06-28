@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import type { AudioData, DanceHostActions, DancePlugin, DancePluginConfig, LyricLine } from '@dancingmusic/plugin-sdk';
+import type {
+  AudioData,
+  DanceHostActions,
+  DanceHostPlaylistDetailSnapshot,
+  DanceHostPlaylistTrackSnapshot,
+  DancePlugin,
+  DancePluginConfig,
+  LyricLine,
+} from '@dancingmusic/plugin-sdk';
 import thumbnailUrl from './mineradio-thumbnail.svg';
 import {
   getLyricProgressWindow,
@@ -62,6 +70,26 @@ interface MineradioShelfCard {
   dofBlur: number;
   dofBucket: number;
   drawKey: string;
+}
+
+interface MineradioShelfDetailPanel {
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  texture: THREE.CanvasTexture;
+  drawKey: string;
+}
+
+interface MineradioShelfDetailRow {
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  texture: THREE.CanvasTexture;
+  track: DanceHostPlaylistTrackSnapshot;
+  index: number;
+  drawKey: string;
+  fxPulse: number;
+  isCenter: boolean;
 }
 
 const PLANE_SIZE = 4.8;
@@ -226,6 +254,23 @@ function wrapCanvasText(
   }
   if (line && lines.length < maxLines) lines.push(line);
   lines.forEach((next, index) => ctx.fillText(next, x, y + index * lineHeight));
+}
+
+function ellipsizeCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  const source = String(text || '');
+  if (ctx.measureText(source).width <= maxWidth) return source;
+  let out = source;
+  while (out.length > 1 && ctx.measureText(`${out}...`).width > maxWidth) out = out.slice(0, -1);
+  return `${out}...`;
+}
+
+function formatDurationLabel(durationSec?: number): string {
+  const raw = Number(durationSec);
+  if (!Number.isFinite(raw) || raw <= 0) return '';
+  const seconds = Math.max(0, Math.round(raw));
+  const min = Math.floor(seconds / 60);
+  const sec = seconds % 60;
+  return `${min}:${String(sec).padStart(2, '0')}`;
 }
 
 function readableInkForHex(hex: string): string {
@@ -887,7 +932,7 @@ export class MineradioPlugin implements DancePlugin {
     name: 'Mineradio',
     description: '移植 Mineradio 舞台歌词主效果：Three 点云封面、悬浮歌词与拖拽视角',
     author: 'DancingMusic',
-    version: '1.0.1',
+    version: '1.1.0',
     category: 'particle',
     price: 0,
     thumbnail: thumbnailUrl,
@@ -957,6 +1002,18 @@ export class MineradioPlugin implements DancePlugin {
   private shelfCenterSmooth = 0;
   private shelfLastWheelAt = 0;
   private shelfCoverCache = new Map<string, { img?: HTMLImageElement; loaded: boolean; failed: boolean; loading: boolean }>();
+  private shelfDetailGroup: THREE.Group | null = null;
+  private shelfDetailPanel: MineradioShelfDetailPanel | null = null;
+  private shelfDetailRows: MineradioShelfDetailRow[] = [];
+  private shelfDetailOpen = false;
+  private shelfDetailLoading = false;
+  private shelfDetailError = '';
+  private shelfDetailPlaylistId = '';
+  private shelfDetailTitle = '';
+  private shelfDetailTracks: DanceHostPlaylistTrackSnapshot[] = [];
+  private shelfDetailToken = 0;
+  private shelfDetailCenterTarget = 0;
+  private shelfDetailCenterSmooth = 0;
   private width = 0;
   private height = 0;
   private elapsed = 0;
@@ -1166,6 +1223,7 @@ export class MineradioPlugin implements DancePlugin {
     (this.lyricStarRiver?.geometry as THREE.BufferGeometry | undefined)?.dispose();
     (this.lyricStarRiver?.material as THREE.Material | undefined)?.dispose();
     this.disposeShelfCards();
+    this.disposeShelfDetail();
     this.shelfGeometry?.dispose();
     this.shelfCoverCache.clear();
     this.renderer?.dispose();
@@ -1482,6 +1540,10 @@ export class MineradioPlugin implements DancePlugin {
     this.shelfGroup.renderOrder = 24;
     this.shelfGeometry = new THREE.PlaneGeometry(2.05, 1.025, 1, 1);
     this.stageGroup.add(this.shelfGroup);
+    this.shelfDetailGroup = new THREE.Group();
+    this.shelfDetailGroup.visible = false;
+    this.shelfDetailGroup.renderOrder = 84;
+    this.stageGroup.add(this.shelfDetailGroup);
   }
 
   private disposeShelfCards(): void {
@@ -1493,6 +1555,23 @@ export class MineradioPlugin implements DancePlugin {
     });
     this.shelfCards = [];
     this.shelfRenderedStart = -1;
+  }
+
+  private disposeShelfDetail(): void {
+    if (this.shelfDetailPanel) {
+      this.shelfDetailGroup?.remove(this.shelfDetailPanel.mesh);
+      this.shelfDetailPanel.texture.dispose();
+      this.shelfDetailPanel.mesh.material.dispose();
+      this.shelfDetailPanel.mesh.geometry.dispose();
+      this.shelfDetailPanel = null;
+    }
+    this.shelfDetailRows.forEach(row => {
+      this.shelfDetailGroup?.remove(row.mesh);
+      row.texture.dispose();
+      row.mesh.material.dispose();
+      row.mesh.geometry.dispose();
+    });
+    this.shelfDetailRows = [];
   }
 
   private requestShelfCover(url: string, card: MineradioShelfCard): void {
@@ -1676,6 +1755,219 @@ export class MineradioPlugin implements DancePlugin {
     }
 
     card.texture.needsUpdate = true;
+  }
+
+  private ensureShelfDetailPanel(): MineradioShelfDetailPanel | null {
+    if (!this.shelfDetailGroup) return null;
+    if (this.shelfDetailPanel) return this.shelfDetailPanel;
+    const canvas = document.createElement('canvas');
+    canvas.width = 900;
+    canvas.height = 1024;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      opacity: 0.86,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.62, 3.02, 1, 1), material);
+    mesh.renderOrder = 232;
+    this.shelfDetailGroup.add(mesh);
+    this.shelfDetailPanel = { mesh, canvas, ctx, texture, drawKey: '' };
+    return this.shelfDetailPanel;
+  }
+
+  private drawShelfDetailPanel(force = false): void {
+    const panel = this.ensureShelfDetailPanel();
+    if (!panel) return;
+    const key = [
+      this.shelfDetailPlaylistId,
+      this.shelfDetailTitle,
+      this.shelfDetailTracks.length,
+      this.shelfDetailLoading ? 1 : 0,
+      this.shelfDetailError,
+      this.settings.shelfAccentColor,
+      this.settings.shelfBgOpacity,
+    ].join('|');
+    if (!force && panel.drawKey === key) return;
+    panel.drawKey = key;
+    const { ctx, canvas } = panel;
+    const W = canvas.width;
+    const H = canvas.height;
+    const accent = this.settings.shelfAccentColor;
+    ctx.clearRect(0, 0, W, H);
+    drawRoundRect(ctx, 24, 28, W - 48, H - 56, 34);
+    const bg = ctx.createLinearGradient(0, 0, W, H);
+    const alpha = Math.max(0.34, Math.min(0.98, this.settings.shelfBgOpacity));
+    bg.addColorStop(0, `rgba(0,0,0,${Math.min(0.98, alpha + 0.02).toFixed(3)})`);
+    bg.addColorStop(0.42, `rgba(0,0,0,${alpha.toFixed(3)})`);
+    bg.addColorStop(1, `rgba(0,0,0,${Math.max(0.20, alpha - 0.04).toFixed(3)})`);
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    ctx.font = `800 38px ${fontFamily()}`;
+    ctx.fillStyle = 'rgba(255,246,220,0.94)';
+    ctx.fillText(ellipsizeCanvasText(ctx, this.shelfDetailTitle || '歌单详情', W - 310), 72, 92);
+    ctx.font = `500 18px ${fontFamily()}`;
+    ctx.fillStyle = rgba(accent, 0.62);
+    const countLabel = this.shelfDetailLoading
+      ? '正在载入'
+      : this.shelfDetailError
+        ? this.shelfDetailError
+        : (this.shelfDetailTracks.length ? `${this.shelfDetailTracks.length} 首歌曲` : '暂无可播放歌曲');
+    ctx.fillText(countLabel, 74, 128);
+    const sweep = (Math.sin(this.elapsed * 1.7) + 1) * 0.5;
+    const shine = ctx.createLinearGradient(70, 154, W - 80, 154);
+    shine.addColorStop(0, rgba(accent, 0));
+    shine.addColorStop(Math.max(0.01, sweep * 0.72), rgba(accent, 0.14));
+    shine.addColorStop(Math.min(0.99, sweep * 0.72 + 0.14), rgba(accent, 0.56));
+    shine.addColorStop(1, rgba(accent, 0));
+    ctx.fillStyle = shine;
+    ctx.fillRect(72, 154, W - 144, 2);
+    panel.texture.needsUpdate = true;
+  }
+
+  private makeShelfDetailRow(track: DanceHostPlaylistTrackSnapshot, index: number): MineradioShelfDetailRow | null {
+    if (!this.shelfDetailGroup) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 820;
+    canvas.height = 118;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      opacity: 0.78,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.38, 0.34, 1, 1), material);
+    mesh.renderOrder = 240 + index;
+    this.shelfDetailGroup.add(mesh);
+    const row: MineradioShelfDetailRow = { mesh, canvas, ctx, texture, track, index, drawKey: '', fxPulse: 0, isCenter: false };
+    this.drawShelfDetailRow(row, false, true);
+    return row;
+  }
+
+  private drawShelfDetailRow(row: MineradioShelfDetailRow, isCenter: boolean, force = false): void {
+    const track = row.track;
+    const key = [
+      track.id,
+      track.title,
+      track.artist,
+      track.album || '',
+      track.durationSec || '',
+      isCenter ? 1 : 0,
+      Math.round(row.fxPulse * 10),
+      this.settings.shelfAccentColor,
+      this.settings.shelfBgOpacity,
+    ].join('|');
+    if (!force && row.drawKey === key) return;
+    row.drawKey = key;
+    row.isCenter = isCenter;
+    const { ctx, canvas } = row;
+    const W = canvas.width;
+    const H = canvas.height;
+    const accent = this.settings.shelfAccentColor;
+    ctx.clearRect(0, 0, W, H);
+    drawRoundRect(ctx, 14, 10, W - 28, H - 20, 22);
+    const rowBg = ctx.createLinearGradient(0, 0, W, H);
+    const alpha = Math.max(0.24, Math.min(0.98, this.settings.shelfBgOpacity));
+    if (isCenter) {
+      rowBg.addColorStop(0, `rgba(8,14,24,${Math.min(0.985, alpha + 0.04).toFixed(3)})`);
+      rowBg.addColorStop(0.48, `rgba(0,0,0,${Math.min(0.985, alpha + 0.03).toFixed(3)})`);
+      rowBg.addColorStop(1, `rgba(0,0,0,${Math.min(0.98, alpha + 0.015).toFixed(3)})`);
+      ctx.shadowColor = rgba(accent, 0.20);
+      ctx.shadowBlur = 18;
+    } else {
+      rowBg.addColorStop(0, `rgba(16,16,20,${Math.max(0.20, alpha - 0.02).toFixed(3)})`);
+      rowBg.addColorStop(1, `rgba(0,0,0,${Math.max(0.20, alpha - 0.04).toFixed(3)})`);
+    }
+    ctx.fillStyle = rowBg;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = isCenter ? rgba(accent, 0.48) : 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = isCenter ? 1.6 : 1;
+    ctx.stroke();
+
+    ctx.font = `700 18px ${fontFamily()}`;
+    ctx.fillStyle = isCenter ? rgba(accent, 0.95) : 'rgba(255,255,255,0.34)';
+    ctx.fillText(String(row.index + 1).padStart(2, '0'), 32, 52);
+
+    const textX = 82;
+    const playX = W - 144;
+    const duration = formatDurationLabel(track.durationSec);
+    ctx.font = isCenter ? `800 24px ${fontFamily()}` : `600 20px ${fontFamily()}`;
+    ctx.fillStyle = isCenter ? 'rgba(255,247,224,0.96)' : 'rgba(255,255,255,0.80)';
+    ctx.fillText(ellipsizeCanvasText(ctx, track.title || '未知歌曲', playX - textX - 24), textX, 44);
+    ctx.font = `500 15px ${fontFamily()}`;
+    ctx.fillStyle = isCenter ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.64)';
+    const sub = [track.artist || '未知歌手', track.album, duration].filter(Boolean).join(' · ');
+    ctx.fillText(ellipsizeCanvasText(ctx, sub, playX - textX - 24), textX, 72);
+
+    if (isCenter) {
+      drawRoundRect(ctx, playX, H / 2 - 24, 104, 48, 18);
+      const btnGrad = ctx.createLinearGradient(playX, H / 2 - 24, playX + 104, H / 2 + 24);
+      btnGrad.addColorStop(0, 'rgba(255,255,255,0.88)');
+      btnGrad.addColorStop(0.56, rgba(accent, 0.94));
+      btnGrad.addColorStop(1, rgba(accent, 0.58));
+      ctx.fillStyle = btnGrad;
+      ctx.fill();
+      ctx.strokeStyle = rgba(accent, 0.42);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.font = `700 15px ${fontFamily()}`;
+      ctx.fillStyle = readableInkForHex(accent);
+      ctx.fillText('播放', playX + 36, H / 2 + 5);
+    }
+    row.texture.needsUpdate = true;
+  }
+
+  private syncShelfDetailRows(force = false): void {
+    if (!this.shelfDetailGroup) return;
+    this.drawShelfDetailPanel(force || this.shelfDetailLoading);
+    const displayTracks = this.shelfDetailLoading
+      ? [{ id: '__loading__', title: '正在载入歌单', artist: '' }]
+      : this.shelfDetailError
+        ? [{ id: '__error__', title: this.shelfDetailError, artist: '' }]
+        : this.shelfDetailTracks;
+    if (!displayTracks.length) {
+      displayTracks.push({ id: '__empty__', title: '歌单为空', artist: '' });
+    }
+    const radius = 5;
+    const center = Math.max(0, Math.min(displayTracks.length - 1, Math.round(this.shelfDetailCenterTarget)));
+    let start = Math.max(0, center - radius);
+    let end = Math.min(displayTracks.length - 1, start + radius * 2);
+    start = Math.max(0, end - radius * 2);
+    const existingKey = this.shelfDetailRows.map(row => `${row.index}:${row.track.id}`).join('|');
+    const nextKey = displayTracks.slice(start, end + 1).map((track, offset) => `${start + offset}:${track.id}`).join('|');
+    if (!force && existingKey === nextKey) return;
+    this.shelfDetailRows.forEach(row => {
+      this.shelfDetailGroup?.remove(row.mesh);
+      row.texture.dispose();
+      row.mesh.material.dispose();
+      row.mesh.geometry.dispose();
+    });
+    this.shelfDetailRows = [];
+    for (let index = start; index <= end; index += 1) {
+      const row = this.makeShelfDetailRow(displayTracks[index], index);
+      if (row) this.shelfDetailRows.push(row);
+    }
   }
 
   private buildShelfItems(): PlaylistSongInfo[] {
@@ -2065,6 +2357,10 @@ export class MineradioPlugin implements DancePlugin {
 
     if (item.shelfType === 'playlist' && item.playlistId) {
       const request = { id: item.playlistId, title: item.title };
+      if (detail && this.hostActions.getPlaylistDetail) {
+        this.openShelfDetail(card);
+        return true;
+      }
       const action = detail ? this.hostActions.openPlaylistDetail : this.hostActions.playPlaylist;
       if (!action) return false;
       void Promise.resolve(action(request)).catch(() => {
@@ -2083,7 +2379,87 @@ export class MineradioPlugin implements DancePlugin {
     return false;
   }
 
+  private openShelfDetail(card: MineradioShelfCard): void {
+    if (!this.hostActions?.getPlaylistDetail || !card.item.playlistId) return;
+    const playlistId = card.item.playlistId;
+    const token = ++this.shelfDetailToken;
+    this.shelfDetailOpen = true;
+    this.shelfDetailLoading = true;
+    this.shelfDetailError = '';
+    this.shelfDetailPlaylistId = playlistId;
+    this.shelfDetailTitle = card.item.title || '歌单详情';
+    this.shelfDetailTracks = [];
+    this.shelfDetailCenterTarget = 0;
+    this.shelfDetailCenterSmooth = 0;
+    this.shelfDetailGroup && (this.shelfDetailGroup.visible = true);
+    this.syncShelfDetailRows(true);
+    void Promise.resolve(this.hostActions.getPlaylistDetail({ id: playlistId, title: card.item.title }))
+      .then((detail: DanceHostPlaylistDetailSnapshot) => {
+        if (token !== this.shelfDetailToken) return;
+        this.shelfDetailLoading = false;
+        this.shelfDetailError = detail.tracks.length ? '' : '歌单为空';
+        this.shelfDetailTracks = detail.tracks || [];
+        this.shelfDetailCenterTarget = 0;
+        this.shelfDetailCenterSmooth = 0;
+        this.syncShelfDetailRows(true);
+      })
+      .catch(() => {
+        if (token !== this.shelfDetailToken) return;
+        this.shelfDetailLoading = false;
+        this.shelfDetailError = '歌单加载失败';
+        this.shelfDetailTracks = [];
+        this.syncShelfDetailRows(true);
+      });
+  }
+
+  private closeShelfDetail(): void {
+    this.shelfDetailOpen = false;
+    this.shelfDetailLoading = false;
+    this.shelfDetailToken += 1;
+    this.shelfDetailGroup && (this.shelfDetailGroup.visible = false);
+  }
+
+  private playShelfDetailRow(row: MineradioShelfDetailRow): boolean {
+    if (!this.hostActions?.playPlaylist || !this.shelfDetailPlaylistId || row.track.id.startsWith('__')) return false;
+    if (!row.isCenter) {
+      this.shelfDetailCenterTarget = Math.max(0, Math.min(this.shelfDetailTracks.length - 1, row.index));
+      row.fxPulse = Math.max(row.fxPulse, 0.72);
+      return true;
+    }
+    row.fxPulse = Math.max(row.fxPulse, 0.9);
+    void Promise.resolve(this.hostActions.playPlaylist({
+      id: this.shelfDetailPlaylistId,
+      title: this.shelfDetailTitle,
+      startIndex: row.index,
+    })).catch(() => {
+      /* Host owns connector/playback failures. */
+    });
+    return true;
+  }
+
+  private pickShelfDetailRowAt(clientX: number, clientY: number): MineradioShelfDetailRow | null {
+    if (!this.canvas || !this.camera || !this.shelfDetailGroup?.visible || !this.shelfDetailRows.length) return null;
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    this.shelfActionNdc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -(((clientY - rect.top) / rect.height) * 2 - 1),
+    );
+    this.shelfActionRay.setFromCamera(this.shelfActionNdc, this.camera);
+    const hits = this.shelfActionRay.intersectObjects(this.shelfDetailRows.map(row => row.mesh), false);
+    if (!hits.length) return null;
+    return this.shelfDetailRows.find(row => row.mesh === hits[0].object) || null;
+  }
+
   private handleWheel = (event: WheelEvent): void => {
+    if (this.shelfDetailOpen && this.shelfDetailGroup?.visible) {
+      const axis = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+      if (Math.abs(axis) < 2) return;
+      event.preventDefault();
+      const max = Math.max(0, this.shelfDetailTracks.length - 1);
+      this.shelfDetailCenterTarget = Math.max(0, Math.min(max, this.shelfDetailCenterTarget + (axis > 0 ? 1 : -1)));
+      return;
+    }
     if (!this.shelfGroup?.visible || this.settings.shelf === 'off' || this.shelfAllItems.length < 2) return;
     const now = performance.now();
     if (now - this.shelfLastWheelAt < 76) {
@@ -2104,8 +2480,11 @@ export class MineradioPlugin implements DancePlugin {
     const releaseDy = event.clientY - this.pointerDownAt.y;
     const releaseDistance = Math.sqrt(releaseDx * releaseDx + releaseDy * releaseDy);
     if (!this.pointerDownAt.hadDrag && releaseDistance <= CLICK_THRESHOLD) {
-      const shelfHit = this.pickShelfCardAt(event.clientX, event.clientY);
-      if (shelfHit && this.triggerShelfCardAction(shelfHit.card, shelfHit.detail)) {
+      const detailHit = this.pickShelfDetailRowAt(event.clientX, event.clientY);
+      const shelfHit = detailHit ? null : this.pickShelfCardAt(event.clientX, event.clientY);
+      if (detailHit && this.playShelfDetailRow(detailHit)) {
+        this.lastClickAt = 0;
+      } else if (shelfHit && this.triggerShelfCardAction(shelfHit.card, shelfHit.detail)) {
         this.lastClickAt = 0;
       } else {
         const now = performance.now();
@@ -2802,6 +3181,62 @@ export class MineradioPlugin implements DancePlugin {
         material.opacity += (Math.min(1, opacity * baseOpacity + card.fxPulse * 0.10 + breathPulse * 0.035) - material.opacity) * 0.14;
         material.color.setScalar(0.96 + lift * 0.04);
       }
+    });
+    this.updateShelfDetailTransform();
+  }
+
+  private updateShelfDetailTransform(): void {
+    if (!this.shelfDetailGroup) return;
+    const enabled = this.shelfDetailOpen && this.settings.shelf !== 'off';
+    this.shelfDetailGroup.visible = enabled;
+    if (!enabled) return;
+    this.syncShelfDetailRows(this.shelfDetailLoading);
+    const portrait = this.height > this.width * 1.08;
+    const narrow = !portrait && this.width < 980;
+    const baseX = (portrait ? 0.66 : (narrow ? 1.38 : 1.74)) + this.settings.shelfOffsetX * 0.18;
+    const baseY = (portrait ? -0.10 : 0.02) + this.settings.shelfOffsetY * 0.18;
+    const baseZ = (portrait ? 1.18 : 1.36) + this.settings.shelfOffsetZ * 0.24;
+    const scale = (portrait ? 0.76 : (narrow ? 0.88 : 1.0)) * this.settings.shelfSize;
+    this.shelfDetailGroup.position.set(baseX, baseY, baseZ);
+    this.shelfDetailGroup.rotation.x += ((portrait ? -0.02 : -0.06) - this.shelfDetailGroup.rotation.x) * 0.10;
+    this.shelfDetailGroup.rotation.y += ((portrait ? 0.10 : 0.24) - this.shelfDetailGroup.rotation.y) * 0.10;
+    this.shelfDetailGroup.rotation.z += (0 - this.shelfDetailGroup.rotation.z) * 0.10;
+    this.shelfDetailGroup.scale.setScalar(scale);
+
+    if (this.shelfDetailPanel) {
+      this.shelfDetailPanel.mesh.position.set(0, 0, 0.16);
+      this.shelfDetailPanel.mesh.scale.setScalar(1);
+      this.shelfDetailPanel.mesh.material.opacity += ((0.86 * this.settings.shelfOpacity) - this.shelfDetailPanel.mesh.material.opacity) * 0.14;
+    }
+
+    const displayCount = this.shelfDetailLoading || this.shelfDetailError
+      ? 1
+      : Math.max(1, this.shelfDetailTracks.length);
+    this.shelfDetailCenterTarget = Math.max(0, Math.min(displayCount - 1, this.shelfDetailCenterTarget));
+    this.shelfDetailCenterSmooth += (this.shelfDetailCenterTarget - this.shelfDetailCenterSmooth) * 0.16;
+    if (Math.abs(this.shelfDetailCenterSmooth - this.shelfDetailCenterTarget) < 0.001) {
+      this.shelfDetailCenterSmooth = this.shelfDetailCenterTarget;
+    }
+
+    this.shelfDetailRows.forEach(row => {
+      const rel = row.index - this.shelfDetailCenterSmooth;
+      const absRel = Math.abs(rel);
+      const isCenter = absRel < 0.5;
+      row.fxPulse *= Math.pow(0.46, 1 / 60);
+      this.drawShelfDetailRow(row, isCenter);
+      row.mesh.renderOrder = 240 + Math.round((6 - Math.min(absRel, 6)) * 14);
+      const reveal = 1;
+      const parWeight = Math.max(0, 1 - absRel * 0.12);
+      const px = -0.04 + absRel * 0.014;
+      const py = -rel * (portrait ? 0.28 : 0.34);
+      const pz = (isCenter ? 0.62 : 0.58 - absRel * 0.048);
+      const rowScale = (isCenter ? 1.0 : Math.max(0.66, 0.94 - absRel * 0.070)) * (0.90 + reveal * 0.10) * (1 + row.fxPulse * 0.052);
+      row.mesh.position.set(px, py - 0.34, pz);
+      row.mesh.scale.setScalar(rowScale);
+      row.mesh.rotation.y = 0.10;
+      row.mesh.rotation.x = -rel * 0.022;
+      const rowOpacityBase = Math.min(1, (isCenter ? 1.0 : Math.max(0.34, 1.0 - absRel * 0.12)) + row.fxPulse * 0.14);
+      row.mesh.material.opacity += ((rowOpacityBase * this.settings.shelfOpacity * Math.max(0.92, parWeight)) - row.mesh.material.opacity) * 0.16;
     });
   }
 
