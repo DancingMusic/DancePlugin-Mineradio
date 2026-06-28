@@ -1,96 +1,55 @@
 {
-  "name": "mineradio",
-  "productName": "Mineradio",
-  "version": "1.1.1",
-  "description": "沉浸式音乐播放器，融合天气电台、歌词舞台、粒子视觉和 3D 歌单架。",
-  "author": "Mineradio",
-  "main": "desktop/main.js",
-  "private": true,
-  "scripts": {
-    "start": "electron .",
-    "build:win": "electron-builder --win nsis",
-    "build:win:dir": "electron-builder --win dir"
-  },
-  "build": {
-    "appId": "com.mineradio.desktop",
-    "productName": "Mineradio",
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
-    "afterPack": "build/after-pack.js",
-    "toolsets": {
-      "winCodeSign": "1.1.0"
-    },
-    "files": [
-      "desktop/**/*",
-      "public/**/*",
-      "build/**/*",
-      "server.js",
-      "dj-analyzer.js",
-      "package.json",
-      "!public/index.*.html",
-      "public/index.html"
-    ],
-    "asar": false,
-    "win": {
-      "executableName": "Mineradio",
-      "icon": "build/icon.ico",
-      "signAndEditExecutable": false,
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Mineradio",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerSidebar": "build/installerSidebar.bmp",
-      "uninstallerSidebar": "build/installerSidebar.bmp",
-      "installerHeader": "build/installerHeader.bmp",
-      "include": "build/installer.nsh",
-      "artifactName": "Mineradio-${version}-Setup.${ext}"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "XxHuberrr",
-        "repo": "Mineradio"
-      }
-    ]
-  },
-  "mineradio": {
-    "update": {
-      "provider": "github",
-      "owner": "XxHuberrr",
-      "repo": "Mineradio",
-      "preview": true,
-      "preferMirrors": true,
-      "mirrors": [
-        "https://gh.llkk.cc/",
-        "https://ghfast.top/",
-        "https://gh-proxy.com/"
-      ]
+  "name": "@dancingmusic/dance-plugin-mineradio",
+  "version": "1.0.0",
+  "description": "Mineradio stage lyric, particle cover, gesture camera, and 3D playlist shelf plugin for DancingMusic.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     }
   },
+  "files": [
+    "dist",
+    "src",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "dancingmusic",
+    "dance-plugin",
+    "mineradio",
+    "lyrics",
+    "particles",
+    "visualizer",
+    "three"
+  ],
+  "author": "DancingMusic",
+  "license": "GPL-3.0",
+  "peerDependencies": {
+    "@dancingmusic/plugin-sdk": "^1.0.0",
+    "three": "^0.181.2"
+  },
   "dependencies": {
-    "gsap": "^3.15.0",
-    "mpg123-decoder": "^1.0.3",
-    "NeteaseCloudMusicApi": "^4.32.0"
+    "three": "^0.181.2"
   },
   "devDependencies": {
-    "electron": "^42.4.1",
-    "electron-builder": "^26.15.3",
-    "rcedit": "^5.0.2"
+    "@dancingmusic/plugin-sdk": "file:../DancingMusic/submodules/DancingPluginSdk",
+    "@types/node": "^24.10.1",
+    "@types/three": "^0.185.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
   }
 }
