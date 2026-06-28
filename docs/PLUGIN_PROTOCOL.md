@@ -2,6 +2,11 @@
 
 This document records the contract between the `mineradio` plugin and the DancingMusic host.
 
+## Module Export
+
+The bundle default-exports the `MineradioPlugin` class. The host owns
+instantiation so each activation can receive a fresh plugin instance.
+
 ## Rendering
 
 The plugin declares:

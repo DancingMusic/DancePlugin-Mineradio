@@ -3,14 +3,12 @@
   "version": "1.0.0",
   "description": "Mineradio stage lyric, particle cover, gesture camera, and 3D playlist shelf plugin for DancingMusic.",
   "type": "module",
-  "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
     }
   },
   "files": [
@@ -21,8 +19,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
+    "build": "tsup src/index.ts --format esm --target es2020 --no-splitting --dts --clean",
+    "dev": "tsup src/index.ts --format esm --target es2020 --no-splitting --dts --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

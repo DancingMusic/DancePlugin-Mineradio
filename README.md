@@ -51,7 +51,7 @@ npm run build
 - `dist/index.cjs`：CommonJS 插件包。
 - `dist/index.d.ts`：类型声明。
 
-插件默认导出 `MineradioPlugin` 实例，宿主可通过 Dancing 插件加载器动态导入。
+插件默认导出 `MineradioPlugin` 类，宿主通过 Dancing 插件加载器动态导入并实例化。
 
 ## 授权
 
