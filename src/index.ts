@@ -8,7 +8,6 @@ import type {
   DancePluginConfig,
   LyricLine,
 } from '@dancingmusic/plugin-sdk';
-import thumbnailUrl from './mineradio-thumbnail.svg';
 import {
   getLyricProgressWindow,
   getRenderableStageLyrics,
@@ -103,6 +102,7 @@ const CLICK_THRESHOLD = 6;
 const PARTICLE_POINTER_SPIN_X = 0.0032;
 const PARTICLE_POINTER_SPIN_Y = 0.0034;
 const PARTICLE_SPIN_MAX = 6.2;
+const thumbnailUrl = 'https://cdn.jsdelivr.net/gh/DancingMusic/DancePlugin-Mineradio@v1.1.1/docs/assets/mineradio-cover.png';
 
 interface MineradioRipple {
   x: number;
@@ -932,7 +932,7 @@ export class MineradioPlugin implements DancePlugin {
     name: 'Mineradio',
     description: '移植 Mineradio 舞台歌词主效果：Three 点云封面、悬浮歌词与拖拽视角',
     author: 'DancingMusic',
-    version: '1.1.0',
+    version: '1.1.1',
     category: 'particle',
     price: 0,
     thumbnail: thumbnailUrl,
